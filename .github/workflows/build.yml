@@ -22,6 +22,7 @@ jobs:
         run: |
           set -e
           PKGBUILD="PKGBUILDs-pipa/linux-pipa-strawberry/PKGBUILD"
+          CONFIG="PKGBUILDs-pipa/linux-pipa-strawberry/config-qcom-sm8250-pipa.aarch64" 
 
           # Repo URL: rmuxnet/linux  ->  rmuxnet/linux-7.xx
           sed -i 's|url="https://github.com/rmuxnet/linux"|url="https://github.com/rmuxnet/linux-7.xx"|' "$PKGBUILD"
@@ -35,6 +36,9 @@ jobs:
 
           echo "==> PKGBUILD patched:"
           grep -E '^(url|_branch|_srcname)=' "$PKGBUILD"
+
+          # Disable kb as it is causing error
+          sed -i 's|CONFIG_KEYBOARD_XIAOMI_NANOSIC803=m|# CONFIG_KEYBOARD_XIAOMI_NANOSIC803 is not set|' "$CONFIG"
 
       # ── Build with makepkg inside Arch Linux ARM container ───────────────────
       - name: Build with makepkg
