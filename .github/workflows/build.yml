@@ -17,6 +17,25 @@ jobs:
       - name: Clone PKGBUILDs-pipa
         run: git clone https://github.com/Neo10e/PKGBUILDs-pipa.git
 
+      # ── Patch PKGBUILD: linux-7.xx repo + pipa/7.1.7-Stable branch ──────────
+      - name: Patch PKGBUILD for linux-7.xx
+        run: |
+          set -e
+          PKGBUILD="PKGBUILDs-pipa/linux-pipa-strawberry/PKGBUILD"
+
+          # Repo URL: rmuxnet/linux  ->  rmuxnet/linux-7.xx
+          sed -i 's|url="https://github.com/rmuxnet/linux"|url="https://github.com/rmuxnet/linux-7.xx"|' "$PKGBUILD"
+
+          # Branch:   pipa/7.1.7     ->  pipa/7.1.7-Stable
+          sed -i 's|_branch="pipa/7.1.7"|_branch="pipa/7.1.7-Stable"|' "$PKGBUILD"
+
+          # Extract dir (GitHub names it <repo>-<branch with / -> ->):
+          #           linux-pipa-7.1.7  ->  linux-7.xx-pipa-7.1.7-Stable
+          sed -i 's|_srcname="linux-pipa-7.1.7"|_srcname="linux-7.xx-pipa-7.1.7-Stable"|' "$PKGBUILD"
+
+          echo "==> PKGBUILD patched:"
+          grep -E '^(url|_branch|_srcname)=' "$PKGBUILD"
+
       # ── Build with makepkg inside Arch Linux ARM container ───────────────────
       - name: Build with makepkg
         run: |
@@ -42,8 +61,6 @@ jobs:
               useradd -m builder
               chown -R builder /pkg
               su builder -c "makepkg -s --noconfirm"
-
-              SRCDIR=/pkg/src/linux-7.xx-pipa-7.1.7-Stable
 
               cp "$SRCDIR/arch/arm64/boot/Image.gz" /pkg/Image.gz
 
