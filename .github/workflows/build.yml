@@ -9,25 +9,13 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm   # native aarch64
+    runs-on: ubuntu-24.04-arm   # native aarch64 — free for public repos
 
     steps:
 
       # ── Clone PKGBUILDs repo ─────────────────────────────────────────────────
       - name: Clone PKGBUILDs-pipa
         run: git clone https://github.com/Neo10e/PKGBUILDs-pipa.git
-
-      # ── Apply customizations ─────────────────────────────────────────────────
-      # Put any config changes, extra patches, or file copies here.
-      - name: Apply customizations
-        working-directory: PKGBUILDs-pipa/linux-pipa-strawberry
-        run: |
-          # Enable Thin LTO in the kernel config
-          scripts/config --file config-qcom-sm8250-pipa.aarch64 \
-            --disable CONFIG_LTO_NONE       \
-            --disable CONFIG_LTO_CLANG_FULL \
-            --enable  CONFIG_LTO_CLANG      \
-            --enable  CONFIG_LTO_CLANG_THIN
 
       # ── Build with makepkg inside Arch Linux ARM container ───────────────────
       - name: Build with makepkg
