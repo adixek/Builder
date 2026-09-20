@@ -1,39 +1,53 @@
 name: Build linux-pipa-strawberry (Thin LTO)
 
+# No paths filter — triggers on every push to main, every PR, and manual dispatch.
 on:
   push:
     branches: [main]
-    paths:
-      - 'linux-pipa-strawberry/**'
-      - '.github/workflows/build-kernel.yml'
   pull_request:
-    paths:
-      - 'linux-pipa-strawberry/**'
+    branches: [main]
   workflow_dispatch:
 
-# Artifacts produced:
-#   linux-pipa-strawberry-*.pkg.tar.zst         ← modules; flash with pacman -U (Linux) or termux-install.sh
-#   linux-pipa-strawberry-headers-*.pkg.tar.zst ← kernel headers; flash with pacman -U inside Linux
-#   boot.img                                     ← use with: fastboot boot boot.img
-#   null-dtbo.img                               ← flash to dtbo_a + dtbo_b (needed for fastboot boot)
+# ── Artifacts produced ────────────────────────────────────────────────────────
+#
+#  linux-pipa-strawberry-*.pkg.tar.zst
+#    → pacman -U  (installs kernel modules + mkinitcpio preset inside Linux)
+#    → termux-install.sh  (extract from Termux with root)
+#    → twrp-install.sh    (extract from TWRP recovery)
+#
+#  linux-pipa-strawberry-headers-*.pkg.tar.zst
+#    → pacman -U  (installs kernel headers for out-of-tree module builds)
+#
+#  boot.img
+#    → fastboot boot boot.img           (temporary test boot — safe)
+#    → fastboot flash boot_a boot.img   (permanent slot A)
+#    → fastboot flash boot_b boot.img   (permanent slot B)
+#
+#  null-dtbo.img
+#    → fastboot flash dtbo_a null-dtbo.img
+#    → fastboot flash dtbo_b null-dtbo.img
+#    (flash once; prevents Android DTBO overlays from breaking Linux boot)
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
   build:
     runs-on: ubuntu-24.04-arm   # native aarch64 — free for public repos
 
     steps:
-      # ── Checkout ────────────────────────────────────────────────────────────
-      - name: Checkout
+
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Generate PKGBUILD ───────────────────────────────────────────────────
-      # Modules-only main package (no Image/dtbs — those go in boot.img).
-      # Headers package unchanged. Patches auto-injected from patches/ dir.
+      # ── Generate PKGBUILD ────────────────────────────────────────────────────
+      # Writes linux-pipa-strawberry/PKGBUILD dynamically so patches found in
+      # patches/ are auto-injected into source=() and prepare().
       #
-      # BUG NOTE: Do NOT use f-strings with ${{var}} syntax anywhere in this
-      # run block — GitHub Actions expression parser runs on the raw YAML text
-      # before the shell sees it, and ${{ }} is its expression delimiter.
-      # Use string concatenation instead (see apply_patches below).
+      # IMPORTANT: No f-strings with {var} syntax are used inside this heredoc.
+      # GitHub Actions expression parser scans the raw YAML text for ${{ }}
+      # before the shell runs, and curly-brace expressions in f-strings can
+      # confuse it. All substitutions use plain string concatenation instead.
       - name: Generate patched PKGBUILD
         run: |
           python3 - <<'PYEOF'
@@ -50,18 +64,16 @@ jobs:
                   if not os.path.exists(dest):
                       shutil.copy(p, dest)
                   patch_names.append(fname)
-                  print(f"  Patch: {fname}")
+                  print("  Patch: " + fname)
+
           if not patch_names:
               print("  No patches — vanilla build")
 
-          source_patches = "".join(f"\n        '{n}'"  for n in patch_names)
-          sum_patches    = "".join(f"\n         'SKIP'" for _ in patch_names)
-
-          # FIX: use string concatenation — NOT f-strings with ${{...}} here.
-          # f-string double-brace ${{srcdir}} appears literally in the YAML as
-          # ${{srcdir}}, which GitHub Actions expression parser treats as
-          # ${{ srcdir }} and fails with "Unrecognized named-value: srcdir".
-          apply_patches = "".join(
+          # String concatenation only — no f-strings — to avoid any brace that
+          # might be misread by the GitHub Actions expression parser.
+          source_patches = "".join("\n        '" + n + "'"  for n in patch_names)
+          sum_patches    = "".join("\n         'SKIP'"      for _  in patch_names)
+          apply_patches  = "".join(
               '\n  patch -Np1 -i "${srcdir}/' + n + '"'
               for n in patch_names
           )
@@ -73,7 +85,7 @@ jobs:
           _branch="pipa/7.1.7-Stable"
           _srcname="linux-7.xx-pipa-7.1.7-Stable"
           _kernelname=${pkgbase#linux}
-          _desc="Kernel for Xiaomi Pad 6 (pipa) — rmuxnet/linux-7.xx pipa/7.1.7-Stable, Thin LTO"
+          _desc="Kernel for Xiaomi Pad 6 (pipa) - rmuxnet/linux-7.xx pipa/7.1.7-Stable, Thin LTO"
           pkgver=7.1.7
           pkgrel=1
           arch=('aarch64')
@@ -120,7 +132,7 @@ jobs:
             make ARCH=arm64 LLVM=1 LLVM_IAS=1 ${MAKEFLAGS} DTC_FLAGS="-@" dtbs
           }
 
-          # ── Modules-only package (Image/dtbs live in boot.img, not here) ──
+          # Modules-only package — Image/dtbs live in boot.img, not here
           _package() {
             pkgdesc="Kernel modules for Xiaomi Pad 6 (pipa) — ${_desc}"
             depends=(
@@ -145,10 +157,10 @@ jobs:
               DEPMOD=/doesnt/exist \\
               modules_install
 
-            # remove build symlink (host path, useless on device)
+            # Remove host-path build symlink (useless on device)
             rm -f "$modulesdir/build"
 
-            # mkinitcpio preset so the device rebuilds initramfs after install
+            # mkinitcpio preset so device rebuilds initramfs after install
             local _subst="s|%PKGBASE%|${pkgbase}|g; s|%KERNVER%|${kernver}|g"
             sed "$_subst" ../linux-pipa.preset |
               install -Dm644 /dev/stdin "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset"
@@ -157,7 +169,6 @@ jobs:
             echo "dummy" > "${pkgdir}/usr/lib/initcpio/$(<version)"
           }
 
-          # ── Headers package ────────────────────────────────────────────────
           _package-headers() {
             pkgdesc="Header files and scripts for building modules — ${_desc}"
             provides=("linux-headers=${pkgver}")
@@ -207,12 +218,13 @@ jobs:
           pkgbuild = pkgbuild.replace("SUM_PATCHES",    sum_patches)
           pkgbuild = pkgbuild.replace("APPLY_PATCHES",  apply_patches)
 
-          with open(os.path.join(pkg_dir, "PKGBUILD"), "w") as f:
+          out = os.path.join(pkg_dir, "PKGBUILD")
+          with open(out, "w") as f:
               f.write(pkgbuild)
-          print("PKGBUILD written")
+          print("PKGBUILD written to " + out)
           PYEOF
 
-      # ── Build in Arch Linux ARM Docker (native aarch64) ─────────────────────
+      # ── Build in Arch Linux ARM Docker (native aarch64) ──────────────────────
       # Copies Image.gz + pipa DTB out of the build tree for the boot.img step.
       - name: Build with makepkg
         run: |
@@ -222,6 +234,7 @@ jobs:
             menci/archlinuxarm \
             bash -c '
               set -e
+
               pacman-key --init
               pacman-key --populate archlinuxarm
               pacman -Syu --noconfirm
@@ -234,17 +247,19 @@ jobs:
               chown -R builder /pkg
               su builder -c "makepkg -s --noconfirm"
 
-              # Export kernel image + pipa DTB for boot.img assembly
               SRCDIR=/pkg/src/linux-7.xx-pipa-7.1.7-Stable
+
+              echo "==> Copying kernel image..."
               cp "$SRCDIR/arch/arm64/boot/Image.gz" /pkg/Image.gz
 
+              echo "==> Searching for pipa DTB..."
               DTB=$(find "$SRCDIR/arch/arm64/boot/dts" \
                 -name "sm8250-xiaomi-pipa.dtb" 2>/dev/null | head -1)
               if [ -n "$DTB" ]; then
                 cp "$DTB" /pkg/sm8250-xiaomi-pipa.dtb
-                echo "DTB found: $DTB"
+                echo "==> DTB found: $DTB"
               else
-                echo "Warning: pipa DTB not found — boot.img will use Image.gz only"
+                echo "==> WARNING: pipa DTB not found — boot.img will use Image.gz only"
               fi
 
               chmod -R a+r /pkg/*.pkg.tar.zst /pkg/Image.gz 2>/dev/null || true
@@ -253,30 +268,27 @@ jobs:
               ls -lh /pkg/*.pkg.tar.zst
             '
 
-      # ── Install mkbootimg ────────────────────────────────────────────────────
-      # Google's mkbootimg pip package includes unpack_bootimg + mkbootimg.
+      # ── Install mkbootimg ─────────────────────────────────────────────────────
+      # Google's mkbootimg pip package ships both mkbootimg and unpack_bootimg.
       - name: Install mkbootimg tools
         run: pip3 install mkbootimg --break-system-packages
 
-      # ── Download reference boot image ────────────────────────────────────────
-      # We reuse the ramdisk and all boot header parameters from the working
-      # armtix boot image, and only replace the kernel.
+      # ── Download reference boot image ─────────────────────────────────────────
+      # We reuse the ramdisk + all boot header parameters from the working armtix
+      # boot image and only swap in our new kernel.
       - name: Download existing armtix boot image
         run: |
           wget -q \
             https://github.com/Neo10e/armtix-xiaomi-pipa/releases/download/2026-08-13/armtix-pipa-boot-20260813.img \
             -O existing-boot.img
-          echo "Downloaded: $(ls -lh existing-boot.img)"
-
-          # Show boot image info for debugging
+          echo "==> Downloaded: $(ls -lh existing-boot.img | awk '{print $5}')"
           unpack_bootimg --boot_img existing-boot.img --format mkbootimg || true
 
-      # ── Build boot.img with mkbootimg ─────────────────────────────────────────
+      # ── Build boot.img ────────────────────────────────────────────────────────
       # Strategy:
-      #   1. unpack_bootimg extracts the ramdisk + reads all header parameters
-      #      from the reference armtix image.
-      #   2. We append the pipa DTB to Image.gz (required by SM8250 ABL).
-      #   3. mkbootimg rebuilds with our new kernel, everything else from original.
+      #   1. unpack_bootimg extracts the ramdisk + all header params from armtix image.
+      #   2. Append pipa DTB to Image.gz (SM8250 ABL requires this).
+      #   3. mkbootimg rebuilds with our new kernel; everything else from original.
       - name: Build boot.img
         run: |
           set -e
@@ -287,25 +299,25 @@ jobs:
           echo "==> Extracted components:"
           ls -lah boot-unpacked/
 
-          # Get the exact mkbootimg reconstruction args (with file paths to boot-unpacked/)
+          # Capture exact reconstruction args (with paths into boot-unpacked/)
           BOOT_ARGS=$(unpack_bootimg --boot_img existing-boot.img --format mkbootimg)
           echo "==> Reference boot args:"
           echo "$BOOT_ARGS"
 
-          # ── Prepare new kernel ──────────────────────────────────────────────
+          # ── Prepare kernel ──────────────────────────────────────────────────
           IMGDIR="linux-pipa-strawberry"
           if [ -f "$IMGDIR/sm8250-xiaomi-pipa.dtb" ]; then
-            # Append pipa DTB to Image.gz (required for SM8250 ABL to pass DTB to kernel)
+            # SM8250 ABL needs the DTB appended directly to the kernel image
             cat "$IMGDIR/Image.gz" "$IMGDIR/sm8250-xiaomi-pipa.dtb" > kernel-dtb.gz
             NEW_KERNEL="$(pwd)/kernel-dtb.gz"
             echo "==> Using Image.gz + appended pipa DTB"
           else
             NEW_KERNEL="$(pwd)/$IMGDIR/Image.gz"
-            echo "Warning: pipa DTB not found — using Image.gz only (may not boot)"
+            echo "==> WARNING: pipa DTB not found — using Image.gz only (may not boot)"
           fi
           echo "==> Kernel: $NEW_KERNEL ($(ls -lh "$NEW_KERNEL" | awk '{print $5}'))"
 
-          # ── Find ramdisk from extracted components ──────────────────────────
+          # ── Locate ramdisk ──────────────────────────────────────────────────
           RAMDISK=""
           for f in boot-unpacked/ramdisk boot-unpacked/ramdisk.lz4 boot-unpacked/ramdisk.gz; do
             if [ -f "$f" ]; then
@@ -316,9 +328,7 @@ jobs:
           done
           [ -n "$RAMDISK" ] || { echo "ERROR: No ramdisk found in boot-unpacked/"; exit 1; }
 
-          # ── Swap kernel in args, keep everything else ───────────────────────
-          # Replace the --kernel path from unpack_bootimg output with our kernel.
-          # Also remove --ramdisk since we pass it explicitly (the path may differ).
+          # ── Replace kernel + ramdisk in args; keep everything else ──────────
           BOOT_ARGS_FILTERED=$(echo "$BOOT_ARGS" \
             | sed 's|--kernel [^ ]*||g' \
             | sed 's|--ramdisk [^ ]*||g')
@@ -331,26 +341,23 @@ jobs:
             $BOOT_ARGS_FILTERED \
             --output boot.img
 
-          echo "==> boot.img: $(ls -lh boot.img)"
+          echo "==> boot.img: $(ls -lh boot.img | awk '{print $5}')"
 
-          # Sanity-verify the result
+          # Verify the result
           unpack_bootimg --boot_img boot.img --format mkbootimg || true
 
-      # ── Create null DTBO ─────────────────────────────────────────────────────
-      # A valid-but-empty DTBO image. Without this, the bootloader may apply
-      # Android overlays that break Linux. Flash to both dtbo_a and dtbo_b.
-      # Required for "fastboot boot boot.img" to work correctly.
+      # ── Create null DTBO ──────────────────────────────────────────────────────
+      # A valid but empty DTBO image. Without this the bootloader may apply
+      # Android overlays that break Linux. Flash to both dtbo_a and dtbo_b once.
       - name: Create null-dtbo.img
         run: |
           python3 - <<'PYEOF'
           import struct
 
-          # DTBO header (big-endian 32-bit words):
-          # magic, total_size, header_size, dt_entry_size,
-          # dt_entry_count=0, dt_entries_offset, page_size, version
+          # DTBO v0 header — big-endian 32-bit words, zero entries
           header = struct.pack('>8I',
               0xd7b7ab1e,  # magic
-              32,          # total_size (header only, no entries)
+              32,          # total_size  (header only, no entries)
               32,          # header_size
               32,          # dt_entry_size
               0,           # dt_entry_count = 0 (no overlays)
@@ -360,29 +367,10 @@ jobs:
           )
           with open('null-dtbo.img', 'wb') as f:
               f.write(header)
-          print(f"null-dtbo.img: {len(header)} bytes — valid empty DTBO header")
+          print("null-dtbo.img written: " + str(len(header)) + " bytes (valid empty DTBO header)")
           PYEOF
 
-      # ── Upload all artifacts ─────────────────────────────────────────────────
-      #
-      # linux-pipa-strawberry-X.Y.Z-N-aarch64.pkg.tar.zst
-      #   → pacman -U inside Linux  (installs modules + mkinitcpio preset)
-      #   → OR: extract with termux-install.sh from Termux (root)
-      #   → OR: extract with twrp-install.sh from TWRP
-      #
-      # linux-pipa-strawberry-headers-X.Y.Z-N-aarch64.pkg.tar.zst
-      #   → pacman -U inside Linux  (installs kernel headers for module builds)
-      #
-      # boot.img
-      #   → fastboot boot boot.img          (temporary — safe for testing)
-      #   → fastboot flash boot_a boot.img  (permanent)
-      #   → fastboot flash boot_b boot.img
-      #
-      # null-dtbo.img
-      #   → fastboot flash dtbo_a null-dtbo.img
-      #   → fastboot flash dtbo_b null-dtbo.img
-      #   (do this ONCE; needed so fastboot boot doesn't apply Android overlays)
-      #
+      # ── Upload artifacts ──────────────────────────────────────────────────────
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
