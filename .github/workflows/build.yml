@@ -23,7 +23,8 @@ jobs:
           set -e
           PKGBUILD="PKGBUILDs-pipa/linux-pipa-strawberry/PKGBUILD"
           CONFIG="PKGBUILDs-pipa/linux-pipa-strawberry/config-qcom-sm8250-pipa.aarch64" 
-
+          dts="arch/arm64/boot/dts/qcom/sm8250-xiaomi-pipa.dts"
+          
           # Repo URL: rmuxnet/linux  ->  rmuxnet/linux-7.xx
           sed -i 's|url="https://github.com/rmuxnet/linux"|url="https://github.com/rmuxnet/linux-7.xx"|' "$PKGBUILD"
 
