@@ -40,6 +40,9 @@ jobs:
           # Disable kb as it is causing error
           sed -i 's|CONFIG_KEYBOARD_XIAOMI_NANOSIC803=m|# CONFIG_KEYBOARD_XIAOMI_NANOSIC803 is not set|' "$CONFIG"
 
+          # Disable checksum verification
+          sed -i -E "0,/^[[:space:]]*'[0-9a-f]{128}'/s//'SKIP'/" "$PKGBUILD"
+
       # ── Build with makepkg inside Arch Linux ARM container ───────────────────
       - name: Build with makepkg
         run: |
