@@ -27,6 +27,10 @@ jobs:
             bash -c '
               set -e
 
+              # Disable pacman Landlock sandbox — required in unprivileged containers
+              # (pacman 6.1+ uses kernel Landlock which GitHub Actions runners block)
+              sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
+
               pacman-key --init
               pacman-key --populate archlinuxarm
               pacman -Syu --noconfirm
