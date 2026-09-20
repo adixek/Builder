@@ -43,6 +43,8 @@ jobs:
           # Disable checksum verification
           sed -i -E "0,/^[[:space:]]*'[0-9a-f]{128}'/s//'SKIP'/" "$PKGBUILD"
 
+          sed -i '/opp-3187200000 {/,/};/ s/^\(\s*\)cpu7_opp21: /\1/' "$dts"
+
       # ── Build with makepkg inside Arch Linux ARM container ───────────────────
       - name: Build with makepkg
         run: |
